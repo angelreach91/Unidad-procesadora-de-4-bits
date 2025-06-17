@@ -1,0 +1,135 @@
+const int dataPins[23] = {
+  22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+  32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
+  43, 44, 45
+};
+
+const int clockPin = 42;
+const int clearPin = 46;
+
+// Pines para representar el contenido de cada registro
+const int leds_R1[4] = {4, 5, 6, 7};    // LSB a MSB
+const int leds_R2[4] = {8, 9, 10, 11};
+const int leds_R3[4] = {12, 13, A0, A1};
+const int leds_R4[4] = {A2, A3, A4, A5};
+
+bool clkActivo = false;
+bool clearActivo = false;
+unsigned long clkInicio = 0;
+unsigned long clearInicio = 0;
+const unsigned long clkDuracion = 200;
+const unsigned long clearDuracion = 200;
+unsigned long ultimoComando = 0;
+const unsigned long esperaMinima = 50;
+
+void setup() {
+  Serial.begin(115200);
+
+  for (int i = 0; i < 23; i++) {
+    pinMode(dataPins[i], OUTPUT);
+    digitalWrite(dataPins[i], LOW);
+  }
+
+  // Pines de salida para cada registro
+  for (int i = 0; i < 4; i++) {
+    pinMode(leds_R1[i], OUTPUT);
+    pinMode(leds_R2[i], OUTPUT);
+    pinMode(leds_R3[i], OUTPUT);
+    pinMode(leds_R4[i], OUTPUT);
+  }
+
+  pinMode(clockPin, OUTPUT);
+  pinMode(clearPin, OUTPUT);
+  digitalWrite(clockPin, LOW);
+  digitalWrite(clearPin, LOW);
+}
+
+void mostrarRegistro(int* pines, byte valor) {
+  for (int i = 0; i < 4; i++) {
+    digitalWrite(pines[i], (valor >> (3 - i)) & 1);
+  }
+}
+
+void loop() {
+  unsigned long ahora = millis();
+
+  if (clkActivo && ahora - clkInicio >= clkDuracion) {
+    digitalWrite(clockPin, LOW);
+    clkActivo = false;
+  }
+
+  if (clearActivo && ahora - clearInicio >= clearDuracion) {
+    digitalWrite(clearPin, LOW);
+    clearActivo = false;
+  }
+
+  if (ahora - ultimoComando < esperaMinima) return;
+
+  if (Serial.available()) {
+    char peekChar = Serial.peek();
+
+    if (peekChar == 'C' && !clkActivo) {
+      Serial.read();
+      digitalWrite(clockPin, HIGH);
+      clkInicio = ahora;
+      clkActivo = true;
+      ultimoComando = ahora;
+      return;
+    }
+
+    if (peekChar == 'L' && !clearActivo) {
+      Serial.read();
+      digitalWrite(clearPin, HIGH);
+      clearInicio = ahora;
+      clearActivo = true;
+      ultimoComando = ahora;
+
+      for (int i = 0; i < 23; i++) {
+        digitalWrite(dataPins[i], LOW);
+      }
+      return;
+    }
+
+    while (Serial.available() && !isHexadecimalDigit(Serial.peek())) {
+      Serial.read();
+    }
+
+    if (Serial.available() >= 6) {
+      String hexStr = "";
+      while (hexStr.length() < 6 && Serial.available()) {
+        char c = Serial.read();
+        if (isHexadecimalDigit(c)) {
+          hexStr += c;
+        }
+      }
+
+      if (hexStr.length() == 6) {
+        unsigned long valor = strtoul(hexStr.c_str(), NULL, 16);
+
+        for (int i = 0; i < 23; i++) {
+          bool bit = (valor >> (22 - i)) & 1;
+          digitalWrite(dataPins[i], bit ? HIGH : LOW);
+        }
+
+        // Obtener registro destino (bits 0 a 2)
+        byte regBits = (valor >> 20) & 0b111;
+
+        // Obtener los últimos 4 bits (bits 0 a 3)
+        byte extraBits = valor & 0xF;
+
+        // Mostrar valor en el registro correspondiente
+        if (regBits == 0b000) {
+          mostrarRegistro(leds_R1, extraBits);
+        } else if (regBits == 0b010) {
+          mostrarRegistro(leds_R2, extraBits);
+        } else if (regBits == 0b100) {
+          mostrarRegistro(leds_R3, extraBits);
+        } else if (regBits == 0b110) {
+          mostrarRegistro(leds_R4, extraBits);
+        }
+
+        ultimoComando = ahora;
+      }
+    }
+  }
+}
